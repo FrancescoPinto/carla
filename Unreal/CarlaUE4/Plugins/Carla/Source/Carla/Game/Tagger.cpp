@@ -9,9 +9,11 @@
 
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "ProceduralMeshComponent.h"
 #include "Engine/SkeletalMesh.h"
 #include "Engine/StaticMesh.h"
 #include "EngineUtils.h"
+#include "Templates/Casts.h"
 #include "PhysicsEngine/PhysicsAsset.h"
 
 template <typename T>
@@ -75,6 +77,26 @@ void ATagger::TagActor(const AActor &Actor, bool bTagForSemanticSegmentation)
     UE_LOG(LogCarla, Log, TEXT("  + StaticMeshComponent: %s"), *Component->GetName());
     UE_LOG(LogCarla, Log, TEXT("    - Label: \"%s\""), *GetTagAsString(Label));
 #endif // CARLA_TAGGER_EXTRA_LOG
+  }
+
+  // Iterate procedural meshes.
+  TArray<UProceduralMeshComponent *> ProceduralMeshComponents;
+  Actor.GetComponents<UProceduralMeshComponent>(ProceduralMeshComponents);
+  for (UProceduralMeshComponent *Component : ProceduralMeshComponents) {
+
+    //auto a = (AProceduralMeshActor*)(*Actor);//dynamic_cast<AProceduralMeshActor*>(*Actor);
+
+    //if (a != nullptr){
+    if (Actor.IsA(AProceduralMeshActor::StaticClass())){
+      const AActor* actor = &Actor;
+      auto a = Cast<AProceduralMeshActor>(actor);
+      const auto Label = a->getIsSidewalk() ? ECityObjectLabel::Sidewalks : ECityObjectLabel::Roads;
+      SetStencilValue(*Component, Label, bTagForSemanticSegmentation);
+    }
+    #ifdef CARLA_TAGGER_EXTRA_LOG
+        UE_LOG(LogCarla, Log, TEXT("  + ProceduralMeshComponent: %s"), *Component->GetName());
+        UE_LOG(LogCarla, Log, TEXT("    - Label: \"%s\""), *GetTagAsString(Label));
+    #endif // CARLA_TAGGER_EXTRA_LOG
   }
 
   // Iterate skeletal meshes.

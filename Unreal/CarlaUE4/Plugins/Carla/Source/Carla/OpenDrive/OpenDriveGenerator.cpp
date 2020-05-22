@@ -17,6 +17,8 @@
 #include "Engine/Classes/Interfaces/Interface_CollisionDataProvider.h"
 #include "PhysicsEngine/BodySetupEnums.h"
 
+#include "Carla/Actor/AProceduralMeshActor.h"
+
 AOpenDriveGenerator::AOpenDriveGenerator(const FObjectInitializer &ObjectInitializer)
   : Super(ObjectInitializer)
 {
@@ -81,8 +83,10 @@ void AOpenDriveGenerator::GenerateRoadMesh()
       Parameters.max_road_length,
       Parameters.additional_width,
       Parameters.smooth_junctions);
-  for (const auto &Mesh : Meshes) {
-    AActor *TempActor = GetWorld()->SpawnActor<AActor>();
+    //first is sidewalks ... 
+  for (const auto &Mesh : Meshes.first) {
+    AProceduralMeshActor *TempActor = GetWorld()->SpawnActor<AProceduralMeshActor>();
+    TempActor->setIsSidewalk(true); //Mesh->GetMaterials()[0].name == "sidewalk");
     UProceduralMeshComponent *TempPMC = NewObject<UProceduralMeshComponent>(TempActor);
     TempPMC->RegisterComponent();
     TempPMC->AttachToComponent(
@@ -104,6 +108,32 @@ void AOpenDriveGenerator::GenerateRoadMesh()
 
     ActorMeshList.Add(TempActor);
   }
+  //then roads, yeah, i know, @todo clean this bad copy-paste practice
+  for (const auto &Mesh : Meshes.second) {
+    AProceduralMeshActor *TempActor = GetWorld()->SpawnActor<AProceduralMeshActor>();
+    TempActor->setIsSidewalk(false); //Mesh->GetMaterials()[0].name == "sidewalk");
+    UProceduralMeshComponent *TempPMC = NewObject<UProceduralMeshComponent>(TempActor);
+    TempPMC->RegisterComponent();
+    TempPMC->AttachToComponent(
+        TempActor->GetRootComponent(), FAttachmentTransformRules::KeepRelativeTransform);
+    TempPMC->bUseAsyncCooking = true;
+    TempPMC->bUseComplexAsSimpleCollision = true;
+    TempPMC->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+
+    const FProceduralCustomMesh MeshData = *Mesh;
+    TempPMC->CreateMeshSection_LinearColor(
+        0,
+        MeshData.Vertices,
+        MeshData.Triangles,
+        MeshData.Normals,
+        TArray<FVector2D>(), // UV0
+        TArray<FLinearColor>(), // VertexColor
+        TArray<FProcMeshTangent>(), // Tangents
+        true); // Create collision
+
+    ActorMeshList.Add(TempActor);
+  }
+
 
   if(!Parameters.enable_mesh_visibility)
   {

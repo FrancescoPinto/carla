@@ -155,7 +155,9 @@ namespace road {
         const float extra_width = 0.6f,
         const  bool smooth_junctions = true) const;
 
-    std::vector<std::unique_ptr<geom::Mesh>> GenerateChunkedMesh(
+    //std::vector<std::unique_ptr<geom::Mesh>>
+    std::pair<std::vector<std::shared_ptr<geom::Mesh>>,
+              std::vector<std::shared_ptr<geom::Mesh>>> GenerateChunkedMesh(
         const double distance,
         const float max_road_len = 50.0f,
         const float extra_width = 0.6f,

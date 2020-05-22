@@ -30,10 +30,12 @@ namespace geom {
     // -- Basic --
 
     /// Generates a mesh that defines a road
-    std::unique_ptr<Mesh> Generate(const road::Road &road) const;
+    //std::unique_ptr<Mesh>
+    std::pair<std::unique_ptr<Mesh>,std::unique_ptr<Mesh>> Generate(const road::Road &road) const;
 
     /// Generates a mesh that defines a lane section
-    std::unique_ptr<Mesh> Generate(const road::LaneSection &lane_section) const;
+    //std::unique_ptr<Mesh>
+    std::pair<std::shared_ptr<Mesh>,std::shared_ptr<Mesh>> Generate(const road::LaneSection &lane_section) const;
 
     /// Generates a mesh that defines a lane from a given s start and end
     std::unique_ptr<Mesh> Generate(
@@ -56,14 +58,28 @@ namespace geom {
     std::unique_ptr<Mesh> GenerateLeftWall(
         const road::Lane &lane, const double s_start, const double s_end) const;
 
+    // --Sidewalk raisers --
+
+    /// Generates a mesh representing the sidwalk riser on the right of the sidewalk lane
+    std::unique_ptr<Mesh> GenerateRightRaiser(
+        const road::Lane &lane, const double s_start, const double s_end) const;
+
+    /// Generates a mesh representing the sidwalk riser on the left of the sidewalk lane 
+    std::unique_ptr<Mesh> GenerateLeftRaiser(
+        const road::Lane &lane, const double s_start, const double s_end) const;
+
     // -- Chunked --
 
     /// Generates a list of meshes that defines a road with a maximum length
-    std::vector<std::unique_ptr<Mesh>> GenerateWithMaxLen(
+    //std::vector<std::unique_ptr<Mesh>>
+    std::pair<std::vector<std::shared_ptr<Mesh>>,
+              std::vector<std::shared_ptr<Mesh>>> GenerateWithMaxLen(
         const road::Road &road) const;
 
     /// Generates a list of meshes that defines a lane_section with a maximum length
-    std::vector<std::unique_ptr<Mesh>> GenerateWithMaxLen(
+    //std::vector<std::unique_ptr<Mesh>>
+    std::pair<std::vector<std::shared_ptr<Mesh>>,
+              std::vector<std::shared_ptr<Mesh>>> GenerateWithMaxLen(
         const road::LaneSection &lane_section) const;
 
     /// Generates a list of meshes that defines a road safety wall with a maximum length
@@ -77,7 +93,9 @@ namespace geom {
     // -- Util --
 
     /// Generates a chunked road with all the features needed for simulation
-    std::vector<std::unique_ptr<Mesh>> GenerateAllWithMaxLen(
+    //std::vector<std::unique_ptr<Mesh>>
+    std::pair<std::vector<std::shared_ptr<Mesh>>,
+              std::vector<std::shared_ptr<Mesh>>> GenerateAllWithMaxLen(
         const road::Road &road) const;
 
     std::unique_ptr<Mesh> MergeAndSmooth(std::vector<std::unique_ptr<Mesh>> &lane_meshes) const;

@@ -615,6 +615,7 @@ namespace road {
         }
       }
       // left lanes start at s max
+      //opendrive standard, the lanes on the other side have inverted s direction
       const auto road_len = road.GetLength();
       for (const auto &lane_section : road.GetLaneSectionsAt(road_len)) {
         for (const auto &lane : lane_section.GetLanes()) {
@@ -947,7 +948,11 @@ namespace road {
       if (road.IsJunction()) {
         continue;
       }
-      out_mesh += *mesh_factory.Generate(road);
+      std::pair<std::unique_ptr<geom::Mesh>,std::unique_ptr<geom::Mesh>> generated_pair =
+                                                            mesh_factory.Generate(road);
+      out_mesh += *generated_pair.first;
+      out_mesh += *generated_pair.second; //probably no need to distinguish between sidewalk/crosswalk as it is not used!
+      //out_mesh += *mesh_factory.Generate(road); <- qui
     }
 
     // Generate roads within junctions and smooth them
@@ -959,7 +964,7 @@ namespace road {
         const auto &road = _data.GetRoads().at(connection.connecting_road);
         for (auto &&lane_section : road.GetLaneSections()) {
           for (auto &&lane_pair : lane_section.GetLanes()) {
-            lane_meshes.push_back(mesh_factory.Generate(lane_pair.second));
+            lane_meshes.push_back(mesh_factory.Generate(lane_pair.second)); //OK
           }
         }
       }
@@ -977,7 +982,9 @@ namespace road {
     return out_mesh;
   }
 
-  std::vector<std::unique_ptr<geom::Mesh>> Map::GenerateChunkedMesh(
+  //std::vector<std::unique_ptr<geom::Mesh>>
+  std::pair<std::vector<std::shared_ptr<geom::Mesh>>,
+            std::vector<std::shared_ptr<geom::Mesh>>> Map::GenerateChunkedMesh(
       const double distance,
       const float max_road_len,
       const float extra_width,
@@ -989,19 +996,35 @@ namespace road {
     mesh_factory.road_param.resolution = static_cast<float>(distance);
     mesh_factory.road_param.max_road_len = max_road_len;
     mesh_factory.road_param.extra_lane_width = extra_width;
-    std::vector<std::unique_ptr<geom::Mesh>> out_mesh_list;
+
+    //modified this
+    //std::vector<std::unique_ptr<geom::Mesh>> out_mesh_list;
+    std::pair<std::vector<std::shared_ptr<geom::Mesh>>,
+              std::vector<std::shared_ptr<geom::Mesh>>> out_mesh_pair;
 
     std::unordered_map<JuncId, geom::Mesh> junction_map;
     for (auto &&pair : _data.GetRoads()) {
       const auto &road = pair.second;
       if (!road.IsJunction()) {
-        std::vector<std::unique_ptr<geom::Mesh>> road_mesh_list =
+
+        auto road_mesh_pair = mesh_factory.GenerateAllWithMaxLen(road);
+        out_mesh_pair.first.insert(
+          out_mesh_pair.first.end(),
+          std::make_move_iterator(road_mesh_pair.first.begin()),
+          std::make_move_iterator(road_mesh_pair.first.end()));
+
+        out_mesh_pair.second.insert(
+          out_mesh_pair.second.end(),
+          std::make_move_iterator(road_mesh_pair.second.begin()),
+          std::make_move_iterator(road_mesh_pair.second.end()));
+
+        /*std::vector<std::unique_ptr<geom::Mesh>> road_mesh_list =
             mesh_factory.GenerateAllWithMaxLen(road);
 
         out_mesh_list.insert(
             out_mesh_list.end(),
             std::make_move_iterator(road_mesh_list.begin()),
-            std::make_move_iterator(road_mesh_list.end()));
+            std::make_move_iterator(road_mesh_list.end()));*/
       }
     }
 
@@ -1017,32 +1040,53 @@ namespace road {
           for (auto &&lane_pair : lane_section.GetLanes()) {
             const auto &lane = lane_pair.second;
             if (lane.GetType() != road::Lane::LaneType::Sidewalk) {
-              lane_meshes.push_back(mesh_factory.Generate(lane));
+              lane_meshes.push_back(mesh_factory.Generate(lane)); //OK
             } else {
-              sidewalk_lane_meshes.push_back(mesh_factory.Generate(lane));
+              sidewalk_lane_meshes.push_back(mesh_factory.Generate(lane)); //ok
             }
           }
         }
       }
       if(smooth_junctions) {
+
         auto merged_mesh = mesh_factory.MergeAndSmooth(lane_meshes);
-        for(auto& lane : sidewalk_lane_meshes) {
-          *merged_mesh += *lane;
+        //merged_mesh is only from lane meshes! hence it is okay!
+        //for(auto& lane : sidewalk_lane_meshes) {
+          //*merged_mesh += *lane;
+        //}
+        std::shared_ptr<geom::Mesh> merged_sidewalk_mesh = std::make_shared<geom::Mesh>();
+        for (auto& lane : sidewalk_lane_meshes){
+          *merged_sidewalk_mesh += *lane;
         }
-        out_mesh_list.push_back(std::move(merged_mesh));
+        out_mesh_pair.first.push_back(std::move(merged_sidewalk_mesh)); //lane
+        out_mesh_pair.second.push_back(std::move(merged_mesh)); //lane
+        //out_mesh_list.push_back(std::move(merged_mesh));
       } else {
-        std::unique_ptr<geom::Mesh> junction_mesh = std::make_unique<geom::Mesh>();
+        //the code below only merges the two lists ..
+        /*std::unique_ptr<geom::Mesh> junction_mesh = std::make_unique<geom::Mesh>();
         for(auto& lane : lane_meshes) {
           *junction_mesh += *lane;
         }
         for(auto& lane : sidewalk_lane_meshes) {
           *junction_mesh += *lane;
+        }*/
+        std::shared_ptr<geom::Mesh> merged_lane_mesh = std::make_shared<geom::Mesh>();
+        for (auto& lane : lane_meshes){
+          *merged_lane_mesh += *lane;
         }
-        out_mesh_list.push_back(std::move(junction_mesh));
+
+        std::shared_ptr<geom::Mesh> merged_sidewalk_mesh = std::make_shared<geom::Mesh>();
+        for (auto& lane : sidewalk_lane_meshes){
+          *merged_sidewalk_mesh += *lane;
+        }
+        out_mesh_pair.first.push_back(std::move(merged_sidewalk_mesh)); //lane
+        out_mesh_pair.second.push_back(std::move(merged_lane_mesh)); //lane
+        //out_mesh_list.push_back(std::move(junction_mesh));
       }
     }
 
-    return out_mesh_list;
+    //return out_mesh_list;
+    return out_mesh_pair;
   }
 
   geom::Mesh Map::GetAllCrosswalkMesh() const {

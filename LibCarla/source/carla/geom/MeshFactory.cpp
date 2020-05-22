@@ -18,20 +18,41 @@ namespace geom {
   /// sections to avoid floating point precision errors.
   static constexpr double EPSILON = 10.0 * std::numeric_limits<double>::epsilon();
 
-  std::unique_ptr<Mesh> MeshFactory::Generate(const road::Road &road) const {
-    Mesh out_mesh;
+  //std::unique_ptr<Mesh> MeshFactory::Generate(const road::Road &road) const {
+  std::pair<std::unique_ptr<Mesh>,std::unique_ptr<Mesh>> MeshFactory::Generate(const road::Road &road) const {
+    Mesh sidewalk_mesh;
+    Mesh road_mesh;
+
+    //Mesh out_mesh;
     for (auto &&lane_section : road.GetLaneSections()) {
-      out_mesh += *Generate(lane_section);
+      auto temp_meshes = Generate(lane_section);
+      sidewalk_mesh += *(temp_meshes.first);
+      road_mesh += *(temp_meshes.second);
+      //out_mesh += *Generate(lane_section);
     }
-    return std::make_unique<Mesh>(out_mesh);
+    return std::make_pair(std::make_unique<Mesh>(sidewalk_mesh),
+                          std::make_unique<Mesh>(road_mesh));
+    //return std::make_unique<Mesh>(out_mesh);
   }
 
-  std::unique_ptr<Mesh> MeshFactory::Generate(const road::LaneSection &lane_section) const {
-    Mesh out_mesh;
+  //std::unique_ptr<Mesh> MeshFactory::Generate(const road::LaneSection &lane_section) const {
+  std::pair<std::shared_ptr<Mesh>,std::shared_ptr<Mesh>> MeshFactory::Generate(const road::LaneSection &lane_section) const {
+
+    Mesh sidewalk_mesh;
+    Mesh road_mesh;
+
+    //Mesh out_mesh;
     for (auto &&lane_pair : lane_section.GetLanes()) {
-      out_mesh += *Generate(lane_pair.second);
+      if (lane_pair.second.GetType() == road::Lane::LaneType::Sidewalk){
+        sidewalk_mesh += *Generate(lane_pair.second);
+      } else { //all other stuff is classified as road, reflects materials ...
+        road_mesh += *Generate(lane_pair.second);
+      }
+      //out_mesh += *Generate(lane_pair.second);
     }
-    return std::make_unique<Mesh>(out_mesh);
+    return std::make_pair(std::make_shared<Mesh>(sidewalk_mesh),
+                          std::make_shared<Mesh>(road_mesh));
+    //return std::make_unique<Mesh>(out_mesh);
   }
 
   std::unique_ptr<Mesh> MeshFactory::Generate(const road::Lane &lane) const {
@@ -87,11 +108,130 @@ namespace geom {
         lane.GetType() == road::Lane::LaneType::Sidewalk ? "sidewalk" : "road");
     out_mesh.AddTriangleStrip(vertices);
     out_mesh.EndMaterial();
+
+    //if sidewalk, add riser
+    if (lane.GetType() == road::Lane::LaneType::Sidewalk){
+      out_mesh += *GenerateLeftRaiser(lane, s_start, s_end);
+      out_mesh += *GenerateRightRaiser(lane, s_start, s_end);
+    }
+
     return std::make_unique<Mesh>(out_mesh);
   }
 
+  std::unique_ptr<Mesh> MeshFactory::GenerateRightRaiser(
+      const road::Lane &lane, const double s_start, const double s_end) const {
+    RELEASE_ASSERT(road_param.resolution > 0.0);
+    DEBUG_ASSERT(s_start >= 0.0);
+    DEBUG_ASSERT(s_end <= lane.GetDistance() + lane.GetLength());
+    DEBUG_ASSERT(s_end >= EPSILON);
+    DEBUG_ASSERT(s_start < s_end);
+    // The lane with lane_id 0 have no physical representation in OpenDRIVE
+    Mesh out_mesh;
+    if (lane.GetId() == 0) {
+      return std::make_unique<Mesh>(out_mesh);
+    }
+    double s_current = s_start;
+    //0.1524f is the hardcoded values they use for sidwalks, hence for a sidwalk
+    //to return back to the height of the street you push it back of -0.1524f
+    const geom::Vector3D height_vector = geom::Vector3D(0.f, 0.f, -0.1524f);
+
+    std::vector<geom::Vector3D> r_vertices;
+    if (lane.IsStraight()) {
+      // Mesh optimization: If the lane is straight just add vertices at the
+      // begining and at the end of it
+      const auto edges = lane.GetCornerPositions(s_current, road_param.extra_lane_width);
+      r_vertices.push_back(edges.first + height_vector);
+      r_vertices.push_back(edges.first);
+    } else {
+      // Iterate over the lane's 's' and store the vertices based on it's width
+      do {
+        // Get the location of the edges of the current lane at the current waypoint
+        const auto edges = lane.GetCornerPositions(s_current, road_param.extra_lane_width);
+        r_vertices.push_back(edges.first + height_vector);
+        r_vertices.push_back(edges.first);
+
+        // Update the current waypoint's "s"
+        s_current += road_param.resolution;
+      } while(s_current < s_end);
+    }
+
+    // This ensures the mesh is constant and have no gaps between roads,
+    // adding geometry at the very end of the lane
+    if (s_end - (s_current - road_param.resolution) > EPSILON) {
+      const auto edges = lane.GetCornerPositions(s_end, road_param.extra_lane_width);
+      r_vertices.push_back(edges.first + height_vector);
+      r_vertices.push_back(edges.first);
+    }
+
+    // Add the adient material, create the strip and close the material
+    out_mesh.AddMaterial(
+        lane.GetType() == road::Lane::LaneType::Sidewalk ? "sidewalk" : "road");
+    out_mesh.AddTriangleStrip(r_vertices);
+    out_mesh.EndMaterial();
+    return std::make_unique<Mesh>(out_mesh);
+  }
+
+  std::unique_ptr<Mesh> MeshFactory::GenerateLeftRaiser(
+      const road::Lane &lane, const double s_start, const double s_end) const {
+    RELEASE_ASSERT(road_param.resolution > 0.0);
+    DEBUG_ASSERT(s_start >= 0.0);
+    DEBUG_ASSERT(s_end <= lane.GetDistance() + lane.GetLength());
+    DEBUG_ASSERT(s_end >= EPSILON);
+    DEBUG_ASSERT(s_start < s_end);
+    // The lane with lane_id 0 have no physical representation in OpenDRIVE
+    Mesh out_mesh;
+    if (lane.GetId() == 0) {
+      return std::make_unique<Mesh>(out_mesh);
+    }
+    double s_current = s_start;
+    //0.1524f is the hardcoded values they use for sidwalks, hence for a sidwalk
+    //to return back to the height of the street you push it back of -0.1524f
+    const geom::Vector3D height_vector = geom::Vector3D(0.f, 0.f, -0.1524f);
+
+    std::vector<geom::Vector3D> l_vertices;
+    if (lane.IsStraight()) {
+      // Mesh optimization: If the lane is straight just add vertices at the
+      // begining and at the end of it
+      const auto edges = lane.GetCornerPositions(s_current, road_param.extra_lane_width);
+      l_vertices.push_back(edges.second);
+      l_vertices.push_back(edges.second + height_vector);
+    } else {
+      // Iterate over the lane's 's' and store the vertices based on it's width
+      do {
+        // Get the location of the edges of the current lane at the current waypoint
+        const auto edges = lane.GetCornerPositions(s_current, road_param.extra_lane_width);
+        l_vertices.push_back(edges.second);
+        l_vertices.push_back(edges.second + height_vector);
+
+        // Update the current waypoint's "s"
+        s_current += road_param.resolution;
+      } while(s_current < s_end);
+    }
+
+    // This ensures the mesh is constant and have no gaps between roads,
+    // adding geometry at the very end of the lane
+    if (s_end - (s_current - road_param.resolution) > EPSILON) {
+      const auto edges = lane.GetCornerPositions(s_end, road_param.extra_lane_width);
+      l_vertices.push_back(edges.second);
+      l_vertices.push_back(edges.second + height_vector);
+    }
+
+    // Add the adient material, create the strip and close the material
+    out_mesh.AddMaterial(
+        lane.GetType() == road::Lane::LaneType::Sidewalk ? "sidewalk" : "road");
+    out_mesh.AddTriangleStrip(l_vertices);
+    out_mesh.EndMaterial();
+    return std::make_unique<Mesh>(out_mesh);
+  }
+
+
+
   std::unique_ptr<Mesh> MeshFactory::GenerateWalls(const road::LaneSection &lane_section) const {
     Mesh out_mesh;
+
+    //here you must choose the lane on the left of sidewalk ...
+    //lanes are kept in an id-lane map, first refers to id, if it is 0,
+    //then do the wall to the 1st lane if it is the rightwall, to -1st if left (or viceversa? doesn't matter much)
 
     const auto min_lane = lane_section.GetLanes().begin()->first == 0 ?
         1 : lane_section.GetLanes().begin()->first;
@@ -111,6 +251,7 @@ namespace geom {
     }
     return std::make_unique<Mesh>(out_mesh);
   }
+
 
   std::unique_ptr<Mesh> MeshFactory::GenerateRightWall(
       const road::Lane &lane, const double s_start, const double s_end) const {
@@ -214,45 +355,88 @@ namespace geom {
     return std::make_unique<Mesh>(out_mesh);
   }
 
-  std::vector<std::unique_ptr<Mesh>> MeshFactory::GenerateWithMaxLen(
+  //std::vector<std::unique_ptr<Mesh>>
+  std::pair<std::vector<std::shared_ptr<Mesh>>,
+            std::vector<std::shared_ptr<Mesh>>> MeshFactory::GenerateWithMaxLen(
       const road::Road &road) const {
-    std::vector<std::unique_ptr<Mesh>> mesh_uptr_list;
+        std::pair<std::vector<std::shared_ptr<Mesh>>,
+                  std::vector<std::shared_ptr<Mesh>>> mesh_uptr_pair;
+
+    //std::vector<std::unique_ptr<Mesh>> mesh_uptr_list;
     for (auto &&lane_section : road.GetLaneSections()) {
-      auto section_uptr_list = GenerateWithMaxLen(lane_section);
-      mesh_uptr_list.insert(
-          mesh_uptr_list.end(),
-          std::make_move_iterator(section_uptr_list.begin()),
-          std::make_move_iterator(section_uptr_list.end()));
+      //auto section_uptr_list = GenerateWithMaxLen(lane_section); <- qui
+      auto section_uptr_pair = GenerateWithMaxLen(lane_section);
+
+      mesh_uptr_pair.first.insert(
+        mesh_uptr_pair.first.end(),
+        std::make_move_iterator(section_uptr_pair.first.begin()),
+        std::make_move_iterator(section_uptr_pair.first.end()));
+
+      mesh_uptr_pair.second.insert(
+        mesh_uptr_pair.second.end(),
+        std::make_move_iterator(section_uptr_pair.second.begin()),
+        std::make_move_iterator(section_uptr_pair.second.end()));
+
+      //mesh_uptr_list.insert(
+      //    mesh_uptr_list.end(),
+      //    std::make_move_iterator(section_uptr_list.begin()),
+      //    std::make_move_iterator(section_uptr_list.end()));
     }
-    return mesh_uptr_list;
+    //return mesh_uptr_list;
+    return mesh_uptr_pair;
+
   }
 
-  std::vector<std::unique_ptr<Mesh>> MeshFactory::GenerateWithMaxLen(
+  //std::vector<std::unique_ptr<Mesh>
+  std::pair<std::vector<std::shared_ptr<Mesh>>,
+            std::vector<std::shared_ptr<Mesh>>> MeshFactory::GenerateWithMaxLen(
       const road::LaneSection &lane_section) const {
-    std::vector<std::unique_ptr<Mesh>> mesh_uptr_list;
+
+    std::pair<std::vector<std::shared_ptr<Mesh>>,
+              std::vector<std::shared_ptr<Mesh>>> mesh_uptr_pair;
+    //std::vector<std::unique_ptr<Mesh>> mesh_uptr_list;
     if (lane_section.GetLength() < road_param.max_road_len) {
-      mesh_uptr_list.emplace_back(Generate(lane_section));
+      auto generated_pair = Generate(lane_section);
+      mesh_uptr_pair.first.emplace_back(generated_pair.first);
+      mesh_uptr_pair.second.emplace_back(generated_pair.second);
+      //mesh_uptr_list.emplace_back(Generate(lane_section));
     } else {
       double s_current = lane_section.GetDistance() + EPSILON;
       const double s_end = lane_section.GetDistance() + lane_section.GetLength() - EPSILON;
       while(s_current + road_param.max_road_len < s_end) {
         const auto s_until = s_current + road_param.max_road_len;
-        Mesh lane_section_mesh;
+        Mesh road_lane_section_mesh;
+        Mesh sidewalk_lane_section_mesh;
         for (auto &&lane_pair : lane_section.GetLanes()) {
-          lane_section_mesh += *Generate(lane_pair.second, s_current, s_until);
+          if (lane_pair.second.GetType() == road::Lane::LaneType::Sidewalk){
+            sidewalk_lane_section_mesh += *Generate(lane_pair.second, s_current, s_until);
+          } else {
+            road_lane_section_mesh += *Generate(lane_pair.second, s_current, s_until);
+          }
         }
-        mesh_uptr_list.emplace_back(std::make_unique<Mesh>(lane_section_mesh));
+        mesh_uptr_pair.first.emplace_back(std::make_shared<Mesh>(sidewalk_lane_section_mesh));
+        mesh_uptr_pair.second.emplace_back(std::make_shared<Mesh>(road_lane_section_mesh));
+        //mesh_uptr_list.emplace_back(std::make_unique<Mesh>(lane_section_mesh));
         s_current = s_until;
       }
       if (s_end - s_current > EPSILON) {
-        Mesh lane_section_mesh;
+        Mesh road_lane_section_mesh;
+        Mesh sidewalk_lane_section_mesh;
         for (auto &&lane_pair : lane_section.GetLanes()) {
-          lane_section_mesh += *Generate(lane_pair.second, s_current, s_end);
+          if (lane_pair.second.GetType() == road::Lane::LaneType::Sidewalk){
+            sidewalk_lane_section_mesh += *Generate(lane_pair.second, s_current, s_end);
+          } else {
+            road_lane_section_mesh += *Generate(lane_pair.second, s_current, s_end);
+          }
         }
-        mesh_uptr_list.emplace_back(std::make_unique<Mesh>(lane_section_mesh));
+        mesh_uptr_pair.first.emplace_back(std::make_shared<Mesh>(sidewalk_lane_section_mesh));
+        mesh_uptr_pair.second.emplace_back(std::make_shared<Mesh>(road_lane_section_mesh));
+        //mesh_uptr_list.emplace_back(std::make_unique<Mesh>(lane_section_mesh));
       }
     }
-    return mesh_uptr_list;
+    //return mesh_uptr_list;
+    return mesh_uptr_pair;
+
   }
 
   std::vector<std::unique_ptr<Mesh>> MeshFactory::GenerateWallsWithMaxLen(
@@ -314,19 +498,38 @@ namespace geom {
     return mesh_uptr_list;
   }
 
-  std::vector<std::unique_ptr<Mesh>> MeshFactory::GenerateAllWithMaxLen(
+  //std::vector<std::unique_ptr<Mesh>>
+  std::pair<std::vector<std::shared_ptr<Mesh>>,
+            std::vector<std::shared_ptr<Mesh>>> MeshFactory::GenerateAllWithMaxLen(
       const road::Road &road) const {
-    std::vector<std::unique_ptr<Mesh>> mesh_uptr_list;
+    std::pair<std::vector<std::shared_ptr<Mesh>>,
+              std::vector<std::shared_ptr<Mesh>>> mesh_uptr_pair;
+
+    //std::vector<std::unique_ptr<Mesh>> mesh_uptr_list;
 
     // Get road meshes
-    auto roads = GenerateWithMaxLen(road);
-    mesh_uptr_list.insert(
+    auto roads = GenerateWithMaxLen(road); //<- qui generi
+    /*mesh_uptr_list.insert(
         mesh_uptr_list.end(),
         std::make_move_iterator(roads.begin()),
-        std::make_move_iterator(roads.end()));
+        std::make_move_iterator(roads.end()));*/
 
+    mesh_uptr_pair.first.insert(
+      mesh_uptr_pair.first.end(),
+      std::make_move_iterator(roads.first.begin()),
+      std::make_move_iterator(roads.first.end()));
+
+    mesh_uptr_pair.second.insert(
+      mesh_uptr_pair.second.end(),
+      std::make_move_iterator(roads.second.begin()),
+      std::make_move_iterator(roads.second.end()));
+
+      //added sidwalk riser
+    //auto sidwalk_risers = GenerateSidwalkRisers;
+
+    //modificato qui, no walls (produce bad semantic segmentation maps)
     // Get wall meshes only if is not a junction
-    if (!road.IsJunction()) {
+    /*if (!road.IsJunction()) {
       auto walls = GenerateWallsWithMaxLen(road);
 
       if (roads.size() == walls.size()) {
@@ -339,9 +542,10 @@ namespace geom {
             std::make_move_iterator(walls.begin()),
             std::make_move_iterator(walls.end()));
       }
-    }
+    }*/
 
-    return mesh_uptr_list;
+    //return mesh_uptr_list;
+    return mesh_uptr_pair;
   }
 
   struct VertexWeight {
